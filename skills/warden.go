@@ -14,11 +14,16 @@ import (
 // 任何试图通过 "../" 逃逸到外部系统的路径，都会被 Path Warden 拦截。
 
 // getSanctuaryRoot 返回当前人格的领地根目录。
+// 路径由 DATA_MOUNT_POINT 环境变量决定，指向 chobits-date 仓库的本地克隆。
 func getSanctuaryRoot(p core.Persona) string {
-	if p == core.PersonaElta {
-		return "./sanctuary/elta_domain"
+	mount := os.Getenv("DATA_MOUNT_POINT")
+	if mount == "" {
+		mount = "./sanctuary"
 	}
-	return "./sanctuary/freya_domain"
+	if p == core.PersonaElta {
+		return mount + "/sanctuary/elta_domain"
+	}
+	return mount + "/sanctuary/freya_domain"
 }
 
 // resolveSafePath 是核心狱卒：绝对防穿透机制（防 ../ 逃逸）。

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -18,17 +19,26 @@ type memorySector struct {
 	entries []MemoryEntry
 }
 
+// dataMount 返回 DATA_MOUNT_POINT 环境变量值，默认 "./data"。
+func dataMount() string {
+	mount := os.Getenv("DATA_MOUNT_POINT")
+	if mount == "" {
+		return "./data"
+	}
+	return mount + "/data"
+}
+
 // eltaSector 是 Elta 的白区记忆扇区（心智档案 Heart Archive）。
 // 只存情感流、饮食偏好、日程、人际关系。
 var eltaSector = &memorySector{
-	path:    "./data/memory_elta/dict.json",
+	path:    filepath.Join(dataMount(), "memory_elta/dict.json"),
 	persona: PersonaElta,
 }
 
 // freyaSector 是 Freya 的黑区记忆扇区（核心寄存器 Core Registers）。
 // 只存系统路径、服务器 IP、代码偏好、API 密钥。
 var freyaSector = &memorySector{
-	path:    "./data/memory_freya/dict.json",
+	path:    filepath.Join(dataMount(), "memory_freya/dict.json"),
 	persona: PersonaFreya,
 }
 
