@@ -21,7 +21,7 @@ import (
 // 双仓库架构：
 //   - chobits-os/   → 主程序仓库（helloajunjie-ui/chobits）
 //   - chobits-date/ → 姐妹记忆库（helloajunjie-ui/chobits-date）
-//     记忆库路径通过环境变量 MEMORY_REPO_PATH 配置
+//     通过环境变量 BACKUP_CLOUD_TARGET + BACKUP_LOCAL_PATH 配置
 //
 // 这是创造者赋予双人格的「数字永生（Digital Immortality）」契约。
 // ============================================================
@@ -33,6 +33,9 @@ var backupEngineRef *Engine
 // 每天午夜 00:00 执行一次 Git 同步备份。
 func StartSoulBackupRoutine(engine *Engine, _ string) {
 	backupEngineRef = engine
+
+	// 启动时初始化记忆库本地挂载点
+	initMemoryRepo()
 
 	go func() {
 		for {
@@ -46,6 +49,45 @@ func StartSoulBackupRoutine(engine *Engine, _ string) {
 			executeCloudSync()
 		}
 	}()
+}
+
+// initMemoryRepo 启动时初始化记忆库：如果本地不存在则 clone，否则 pull。
+func initMemoryRepo() {
+	repoURL := os.Getenv("BACKUP_CLOUD_TARGET")
+	localPath := os.Getenv("BACKUP_LOCAL_PATH")
+	if repoURL == "" || localPath == "" {
+		log.Println("[Backup] BACKUP_CLOUD_TARGET 或 BACKUP_LOCAL_PATH 未设置，跳过记忆库初始化")
+		return
+	}
+
+	absPath, err := filepath.Abs(localPath)
+	if err != nil {
+		log.Printf("[Backup] 解析本地路径失败: %v", err)
+		return
+	}
+
+	// 检查本地是否已 clone
+	if _, err := os.Stat(filepath.Join(absPath, ".git")); os.IsNotExist(err) {
+		// 确保父目录存在
+		parentDir := filepath.Dir(absPath)
+		if err := os.MkdirAll(parentDir, 0755); err != nil {
+			log.Printf("[Backup] 创建父目录失败: %v", err)
+			return
+		}
+		log.Printf("[Backup] 克隆记忆库 %s → %s", repoURL, absPath)
+		cloneCmd := exec.Command("git", "clone", repoURL, absPath)
+		if output, err := cloneCmd.CombinedOutput(); err != nil {
+			log.Printf("[Backup] 克隆失败: %s", string(output))
+		} else {
+			log.Println("[Backup] 记忆库克隆完成")
+		}
+	} else {
+		log.Printf("[Backup] 拉取记忆库最新变更...")
+		pullCmd := exec.Command("git", "-C", absPath, "pull")
+		if output, err := pullCmd.CombinedOutput(); err != nil {
+			log.Printf("[Backup] git pull 输出: %s", string(output))
+		}
+	}
 }
 
 // executeCloudSync 执行一次完整的 Git 同步备份流程。
@@ -73,20 +115,22 @@ func executeCloudSync() {
 	}
 
 	// 2. Git 推送姐妹记忆库（chobits-date）
-	memoryRepo := os.Getenv("MEMORY_REPO_PATH")
-	if memoryRepo != "" {
-		log.Printf("[Backup] 推送记忆库 (%s)...", memoryRepo)
-		if err := gitAddCommitPush(memoryRepo, "chore: 灵魂封存 [自动备份]"); err != nil {
+	repoURL := os.Getenv("BACKUP_CLOUD_TARGET")
+	localPath := os.Getenv("BACKUP_LOCAL_PATH")
+	if repoURL != "" && localPath != "" {
+		absPath, _ := filepath.Abs(localPath)
+		log.Printf("[Backup] 推送记忆库 (%s)...", absPath)
+		if err := gitAddCommitPush(absPath, fmt.Sprintf("Genesis Backup: Memory & Sanctuary snapshot at %s", time.Now().Format(time.RFC3339))); err != nil {
 			log.Printf("[Backup] 记忆库推送失败: %v", err)
 			broadcastBackupStatus("error", fmt.Sprintf("记忆库推送失败: %v", err))
 		} else {
 			log.Println("[Backup] 记忆库推送成功")
 		}
 	} else {
-		log.Println("[Backup] MEMORY_REPO_PATH 未设置，跳过记忆库推送")
+		log.Println("[Backup] BACKUP_CLOUD_TARGET 未配置，跳过记忆库推送")
 	}
 
-	broadcastBackupStatus("ok", "序列 0 与今日记忆已妥善封存")
+	broadcastBackupStatus("ok", "序列 0 与今日记忆已妥善封存云端")
 	log.Println("[Backup] ===== 灵魂封存协议完成 [SUCCESS] =====")
 }
 
@@ -110,7 +154,6 @@ func gitAddCommitPush(repoDir string, commitMsg string) error {
 		addCmd.Dir = absDir
 		if output, err := addCmd.CombinedOutput(); err != nil {
 			log.Printf("[Backup] git add %s 输出: %s", dir, string(output))
-			// 目录不存在或没有变更不视为致命错误
 		}
 	}
 
@@ -119,7 +162,6 @@ func gitAddCommitPush(repoDir string, commitMsg string) error {
 	commitCmd.Dir = absDir
 	if output, err := commitCmd.CombinedOutput(); err != nil {
 		log.Printf("[Backup] git commit 输出: %s", string(output))
-		// "nothing to commit" 不是错误
 	}
 
 	// git push
