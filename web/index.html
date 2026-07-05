@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chobits OS</title>
+    <link rel="stylesheet" href="css/theme.css">
+</head>
+<body class="persona-elta">
+    <!-- 开机仪式 -->
+    <div id="boot-screen">
+        <div class="boot-text">[System] Chobits OS initialized. <span id="boot-persona">Elta</span> online.</div>
+    </div>
+
+    <!-- 主界面 -->
+    <div id="app" style="display:none;">
+        <header id="top-bar">
+            <div id="persona-indicator" class="persona-elta-indicator">ELTA</div>
+            <div id="status-text">生活管家 · 在线</div>
+            <button id="persona-toggle">切换人格</button>
+        </header>
+
+        <main id="main-content">
+            <!-- 左侧神经突触面板（记忆矩阵） -->
+            <aside id="neural-panel">
+                <div id="neural-inner">
+                    <div id="neural-title">Elta's Heart (L2)</div>
+                    <div id="neural-list"></div>
+                </div>
+            </aside>
+            <div id="chat-area">
+                <div id="messages"></div>
+                <!-- Freya 军械库终端日志 -->
+                <div id="arsenal-log"></div>
+                <div id="input-area">
+                    <input type="text" id="user-input" placeholder="输入消息..." />
+                    <button id="send-btn">发送</button>
+                </div>
+            </div>
+            <!-- 右侧领地资源管理器（Sanctuary Explorer） -->
+            <aside id="sanctuary-panel">
+                <div id="sanctuary-inner">
+                    <div id="sanctuary-title">[Elta's Garden]</div>
+                    <div id="sanctuary-list"></div>
+                </div>
+            </aside>
+        </main>
+
+        <!-- 底部状态栏（灵魂封存心跳） -->
+        <footer id="status-bar">
+            <span id="status-bar-text">[System] 连接就绪</span>
+        </footer>
+    </div>
+
+    <!-- 日蚀黑屏动画（Freya 觉醒） -->
+    <div id="eclipse-overlay" style="display:none;">
+        <svg id="eye-svg" viewBox="0 0 100 100" width="100" height="100">
+            <ellipse cx="50" cy="50" rx="40" ry="20" fill="none" stroke="#0ff" stroke-width="2"/>
+            <circle cx="50" cy="50" r="8" fill="#0ff"/>
+        </svg>
+        <div class="eclipse-text">Freya 觉醒</div>
+    </div>
+
+    <!-- Freya 算力燃烧指示器 -->
+    <div id="compute-indicator">[🔥 HIGH-COMPUTE MODE ACTIVE: GEMINI-PRO CORE]</div>
+
+    <script src="js/nexus.js"></script>
+</body>
+</html>
