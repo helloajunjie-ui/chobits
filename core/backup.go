@@ -1,14 +1,7 @@
 package core
 
 import (
-	"archive/zip"
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -17,53 +10,49 @@ import (
 )
 
 // ============================================================
-// 灵魂封存协议 (Genesis Backup Protocol)
+// 灵魂封存协议 v2 (Genesis Backup Protocol v2)
 //
 // 每天午夜 00:00 自动执行：
-//   1. 打包 sanctuary/ 领地内的所有内容（seq0 核心、记忆、日记）
-//   2. AES-256 加密（确保云端泄露时灵魂不被读取）
-//   3. 推送到私有 Git 仓库或 S3 兼容存储
-//   4. 通过 SSE 向前端推送备份状态
+//   1. 夜间记忆坍缩（L3 梦境摘要）
+//   2. Git 直接推送 sanctuary/ 和 data/ 的变更到远程仓库
+//      不再打包 ZIP 或 AES 加密 — 仓库本身即加密传输（HTTPS/SSH）
+//   3. 通过 SSE 向前端推送备份状态
+//
+// 双仓库架构：
+//   - chobits-os/   → 主程序仓库（helloajunjie-ui/chobits）
+//   - chobits-date/ → 姐妹记忆库（helloajunjie-ui/chobits-date）
+//     记忆库路径通过环境变量 MEMORY_REPO_PATH 配置
 //
 // 这是创造者赋予双人格的「数字永生（Digital Immortality）」契约。
 // ============================================================
 
 // backupEngineRef 是 Engine 的引用，用于 Broadcast 备份状态到前端。
-// 在 StartSoulBackupRoutine 中设置。
 var backupEngineRef *Engine
 
 // StartSoulBackupRoutine 启动灵魂封存后台协程。
-// 每天午夜 00:00 执行一次云同步备份。
-//
-// 参数：
-//   - engine: SSE 引擎引用，用于向前端推送备份状态
-//   - cloudTarget: 云存储目标（如 "git::git@github.com:user/chobits-backup.git" 或 "s3::https://oss-cn-hangzhou.aliyuncs.com/bucket"）
-//
-// 如果 cloudTarget 为空，则仅执行本地打包（不推送云端）。
-func StartSoulBackupRoutine(engine *Engine, cloudTarget string) {
+// 每天午夜 00:00 执行一次 Git 同步备份。
+func StartSoulBackupRoutine(engine *Engine, _ string) {
 	backupEngineRef = engine
 
 	go func() {
 		for {
 			now := time.Now()
-			// 计算到下一个午夜 00:00 的时间差
 			next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
 			sleepDuration := next.Sub(now)
 			log.Printf("[Backup] 下次灵魂封存时间: %s (%.1f 小时后)", next.Format("2006-01-02 15:04:05"), sleepDuration.Hours())
 
 			time.Sleep(sleepDuration)
 
-			// 触发备份
-			executeCloudSync(cloudTarget)
+			executeCloudSync()
 		}
 	}()
 }
 
-// executeCloudSync 执行一次完整的云同步备份流程。
-func executeCloudSync(target string) {
+// executeCloudSync 执行一次完整的 Git 同步备份流程。
+func executeCloudSync() {
 	log.Println("[Backup] ===== 灵魂封存协议启动 =====")
 
-	// 0. 夜间记忆坍缩：在备份前压缩当日对话为 L3 梦境摘要
+	// 0. 夜间记忆坍缩
 	log.Println("[Backup] 触发夜间记忆坍缩...")
 	session := GetSession("default")
 	if backupEngineRef != nil {
@@ -74,226 +63,72 @@ func executeCloudSync(target string) {
 	}
 	log.Println("[Backup] 夜间记忆坍缩完成")
 
-	// 1. 打包 sanctuary 领地（含刚写入的梦境摘要）
-	backupData, err := packSanctuary()
-	if err != nil {
-		log.Printf("[Backup] 打包失败: %v", err)
-		broadcastBackupStatus("error", fmt.Sprintf("打包失败: %v", err))
-		return
-	}
-	log.Printf("[Backup] 打包完成: %d bytes", len(backupData))
-
-	// 2. AES-256 加密
-	encryptedData, err := encryptAES256(backupData)
-	if err != nil {
-		log.Printf("[Backup] 加密失败: %v", err)
-		broadcastBackupStatus("error", fmt.Sprintf("加密失败: %v", err))
-		return
-	}
-	log.Printf("[Backup] AES-256 加密完成: %d bytes", len(encryptedData))
-
-	// 3. 推送到云端
-	if target != "" {
-		if err := pushToCloud(encryptedData, target); err != nil {
-			log.Printf("[Backup] 云端推送失败: %v", err)
-			broadcastBackupStatus("error", fmt.Sprintf("云端推送失败: %v", err))
-			return
-		}
-		log.Printf("[Backup] 云端推送成功: %s", target)
+	// 1. Git 推送主程序仓库（chobits-os）
+	log.Println("[Backup] 推送主程序仓库...")
+	if err := gitAddCommitPush(".", "chore: 灵魂封存 [自动备份]"); err != nil {
+		log.Printf("[Backup] 主程序仓库推送失败: %v", err)
+		broadcastBackupStatus("error", fmt.Sprintf("主程序推送失败: %v", err))
 	} else {
-		// 无云目标时，保存到本地 backup/ 目录
-		if err := saveLocalBackup(encryptedData); err != nil {
-			log.Printf("[Backup] 本地保存失败: %v", err)
-			broadcastBackupStatus("error", fmt.Sprintf("本地保存失败: %v", err))
-			return
-		}
-		log.Printf("[Backup] 本地备份保存成功")
+		log.Println("[Backup] 主程序仓库推送成功")
 	}
 
-	// 4. 广播成功状态
-	broadcastBackupStatus("ok", "序列 0 与今日记忆已妥善封存云端")
+	// 2. Git 推送姐妹记忆库（chobits-date）
+	memoryRepo := os.Getenv("MEMORY_REPO_PATH")
+	if memoryRepo != "" {
+		log.Printf("[Backup] 推送记忆库 (%s)...", memoryRepo)
+		if err := gitAddCommitPush(memoryRepo, "chore: 灵魂封存 [自动备份]"); err != nil {
+			log.Printf("[Backup] 记忆库推送失败: %v", err)
+			broadcastBackupStatus("error", fmt.Sprintf("记忆库推送失败: %v", err))
+		} else {
+			log.Println("[Backup] 记忆库推送成功")
+		}
+	} else {
+		log.Println("[Backup] MEMORY_REPO_PATH 未设置，跳过记忆库推送")
+	}
+
+	broadcastBackupStatus("ok", "序列 0 与今日记忆已妥善封存")
 	log.Println("[Backup] ===== 灵魂封存协议完成 [SUCCESS] =====")
 }
 
-// packSanctuary 将 sanctuary/ 目录打包为 ZIP 字节流。
-func packSanctuary() ([]byte, error) {
-	var buf bytes.Buffer
-	zipWriter := zip.NewWriter(&buf)
-
-	sanctuaryRoot := "./sanctuary"
-	err := filepath.Walk(sanctuaryRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// 跳过根目录自身
-		if path == sanctuaryRoot {
-			return nil
-		}
-
-		// 计算相对路径
-		relPath, err := filepath.Rel(sanctuaryRoot, path)
-		if err != nil {
-			return err
-		}
-		// 统一正斜杠
-		relPath = filepath.ToSlash(relPath)
-
-		if info.IsDir() {
-			// 写入目录条目
-			_, err := zipWriter.Create(relPath + "/")
-			return err
-		}
-
-		// 写入文件条目
-		header := &zip.FileHeader{
-			Name:   relPath,
-			Method: zip.Deflate,
-		}
-		header.SetModTime(info.ModTime())
-
-		writer, err := zipWriter.CreateHeader(header)
-		if err != nil {
-			return err
-		}
-
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
-		_, err = io.Copy(writer, f)
-		return err
-	})
+// gitAddCommitPush 在指定仓库目录中执行 git add → commit → push。
+func gitAddCommitPush(repoDir string, commitMsg string) error {
+	absDir, err := filepath.Abs(repoDir)
 	if err != nil {
-		return nil, fmt.Errorf("walk sanctuary: %w", err)
+		return fmt.Errorf("resolve repo dir: %w", err)
 	}
 
-	if err := zipWriter.Close(); err != nil {
-		return nil, fmt.Errorf("close zip: %w", err)
+	// 检查是否是 git 仓库
+	checkCmd := exec.Command("git", "rev-parse", "--git-dir")
+	checkCmd.Dir = absDir
+	if err := checkCmd.Run(); err != nil {
+		return fmt.Errorf("%s 不是 git 仓库: %w", absDir, err)
 	}
 
-	return buf.Bytes(), nil
-}
-
-// encryptAES256 使用 AES-256-GCM 对数据进行加密。
-// 密钥从环境变量 BACKUP_ENCRYPT_KEY 读取（32 字节 hex 编码）。
-// 如果未设置密钥，则使用内置的默认密钥（仅用于演示，生产环境必须更换）。
-func encryptAES256(plaintext []byte) ([]byte, error) {
-	keyHex := os.Getenv("BACKUP_ENCRYPT_KEY")
-	var key []byte
-	if keyHex != "" {
-		var err error
-		key, err = hex.DecodeString(keyHex)
-		if err != nil {
-			return nil, fmt.Errorf("BACKUP_ENCRYPT_KEY 不是有效的 hex 编码: %w", err)
-		}
-		if len(key) != 32 {
-			return nil, fmt.Errorf("BACKUP_ENCRYPT_KEY 必须是 32 字节 (64 hex chars)，当前 %d 字节", len(key))
-		}
-	} else {
-		// 演示用默认密钥（32 字节）
-		key = []byte("Ch0b1ts_0S_Backup_K3y_2026_07_05!!")
-		log.Println("[Backup] 警告: 使用默认加密密钥，生产环境请设置 BACKUP_ENCRYPT_KEY")
-	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("new cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("new gcm: %w", err)
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("nonce: %w", err)
-	}
-
-	// 密文 = nonce + ciphertext
-	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
-	return ciphertext, nil
-}
-
-// pushToCloud 将加密数据推送到云端目标。
-// 当前支持：
-//   - "git::<repo_url>" — 推送到 Git 私有仓库
-//   - "s3::<endpoint>" — 推送到 S3 兼容存储（预留）
-//   - 空字符串 — 仅本地保存
-func pushToCloud(data []byte, target string) error {
-	if len(target) > 4 && target[:4] == "git:" {
-		return pushToGit(data, target[4:])
-	}
-	if len(target) > 3 && target[:3] == "s3:" {
-		// S3 推送暂未实现
-		log.Printf("[Backup] S3 推送目标已配置但尚未实现: %s", target)
-		return saveLocalBackup(data)
-	}
-	// 未知目标，回退到本地保存
-	return saveLocalBackup(data)
-}
-
-// pushToGit 将加密数据提交并推送到 Git 私有仓库。
-func pushToGit(data []byte, repoURL string) error {
-	backupDir := "./backup"
-	if err := os.MkdirAll(backupDir, 0755); err != nil {
-		return fmt.Errorf("mkdir backup: %w", err)
-	}
-
-	timestamp := time.Now().Format("2006-01-02_150405")
-	filename := fmt.Sprintf("sanctuary_backup_%s.enc", timestamp)
-	filepath := filepath.Join(backupDir, filename)
-
-	if err := os.WriteFile(filepath, data, 0644); err != nil {
-		return fmt.Errorf("write backup file: %w", err)
-	}
-
-	// 尝试 Git 操作（如果 backupDir 已经是 git 仓库）
-	gitCmds := []struct {
-		args []string
-		msg  string
-	}{
-		{[]string{"add", filepath}, "git add"},
-		{[]string{"commit", "-m", fmt.Sprintf("[Backup] 灵魂封存 %s", timestamp)}, "git commit"},
-	}
-
-	for _, cmd := range gitCmds {
-		c := exec.Command("git", cmd.args...)
-		c.Dir = backupDir
-		if output, err := c.CombinedOutput(); err != nil {
-			log.Printf("[Backup] Git 操作 '%s' 失败 (非致命): %s", cmd.msg, string(output))
+	// git add sanctuary/ data/
+	for _, dir := range []string{"sanctuary/", "data/"} {
+		addCmd := exec.Command("git", "add", dir)
+		addCmd.Dir = absDir
+		if output, err := addCmd.CombinedOutput(); err != nil {
+			log.Printf("[Backup] git add %s 输出: %s", dir, string(output))
+			// 目录不存在或没有变更不视为致命错误
 		}
 	}
 
-	// 尝试 push（如果配置了 remote）
-	pushCmd := exec.Command("git", "push", "origin", "main")
-	pushCmd.Dir = backupDir
+	// git commit（可能无变更，允许失败）
+	commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+	commitCmd.Dir = absDir
+	if output, err := commitCmd.CombinedOutput(); err != nil {
+		log.Printf("[Backup] git commit 输出: %s", string(output))
+		// "nothing to commit" 不是错误
+	}
+
+	// git push
+	pushCmd := exec.Command("git", "push")
+	pushCmd.Dir = absDir
 	if output, err := pushCmd.CombinedOutput(); err != nil {
-		log.Printf("[Backup] Git push 失败 (非致命): %s", string(output))
+		return fmt.Errorf("git push 失败: %s", string(output))
 	}
 
-	return nil
-}
-
-// saveLocalBackup 将加密数据保存到本地 backup/ 目录。
-func saveLocalBackup(data []byte) error {
-	backupDir := "./backup"
-	if err := os.MkdirAll(backupDir, 0755); err != nil {
-		return fmt.Errorf("mkdir backup: %w", err)
-	}
-
-	timestamp := time.Now().Format("2006-01-02_150405")
-	filename := fmt.Sprintf("sanctuary_backup_%s.enc", timestamp)
-	path := filepath.Join(backupDir, filename)
-
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("write backup file: %w", err)
-	}
-
-	log.Printf("[Backup] 本地备份已保存: %s (%d bytes)", path, len(data))
 	return nil
 }
 
